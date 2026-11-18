@@ -72,8 +72,8 @@ function dataView() {
   return `<div class="panel"><h3>Sauvegarde et export</h3>
     <p>${events.length} événement(s) enregistré(s) sur ce téléphone.</p>
     <p class="${old ? 'warn' : 'mut'}">${le ? 'Dernier export : ' + fr(new Date(le), { day: 'numeric', month: 'long', year: 'numeric' }) : 'Aucun export réalisé.'}${old ? ' — pensez à exporter ce mois-ci.' : ''}</p>
-    <div class="btns"><button data-act="export">Exporter (JSON)</button><button data-act="import">Importer / Restaurer</button></div>
-    <p class="mut">Le fichier JSON contient événements, pauses modifiées et règles : sauvegarde, restauration et transfert vers l’ordinateur.</p></div>
+    <div class="btns"><button data-act="export">Exporter (JSON)</button><button data-act="import">Importer / Restaurer</button><button class="ghost" data-act="ics">Vers l’agenda (.ics)</button></div>
+    <p class="mut">Le fichier JSON contient événements, pauses modifiées et règles : sauvegarde, restauration et transfert vers l’ordinateur. Le fichier .ics ajoute vos événements à l’agenda du téléphone (il ne remplace pas la sauvegarde JSON).</p></div>
     <div class="panel"><h3>Règles de calcul</h3><div class="row">${inp('s-n', 'Travail normal (h/jour)', settings.normal, '0.25')}${inp('s-p', 'Pause (min)', settings.pause, '5')}</div>
     <div class="row">${inp('s-f', 'Pause entre (h)', settings.from, '0.5')}${inp('s-t', 'et (h)', settings.to, '0.5')}</div>
     <div class="btns"><button data-act="savesettings">Enregistrer les règles</button></div>
@@ -152,6 +152,12 @@ async function exportJSON() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
   localStorage.setItem('lastExport', new Date().toISOString()); toast('Fichier exporté'); render();
 }
+async function exportICS() {
+  const name = `agenda-${iso(new Date())}.ics`, blob = new Blob([Calc.toICS(events)], { type: 'text/calendar' }), file = new File([blob], name, { type: 'text/calendar' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1e4); toast('Fichier .ics prêt');
+}
 async function onFile(file) {
   if (!file) return;
   let r; try { r = Calc.validate(JSON.parse(await file.text())); } catch (e) { r = { ok: false, errors: ['Ce fichier n’est pas un JSON valide.'], warnings: [], events: [] }; }
@@ -217,6 +223,7 @@ document.addEventListener('click', async e => {
     case 'autopause': delete dayPause[d.k]; await putMeta('dayPause', dayPause); dlg.close(); render(); return toast('Pause automatique rétablie');
     case 'savesettings': return saveSettings();
     case 'export': return exportJSON();
+    case 'ics': return exportICS();
     case 'import': $('#file').value = ''; return $('#file').click();
     case 'merge': case 'replace':
       if (d.act === 'replace' && !confirm('Remplacer TOUTES les données actuelles par celles du fichier ?')) return;

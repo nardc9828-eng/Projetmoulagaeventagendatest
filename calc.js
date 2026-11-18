@@ -101,6 +101,26 @@
     const settings = st && st.normal > 0 && st.normal <= 16 && st.pause >= 0 && st.to > st.from ? { normal: +st.normal, pause: +st.pause, from: +st.from, to: +st.to } : null;
     return { ok: errors.length === 0, errors, warnings, events, dayPause, settings };
   }
-  const api = { NORMAL, tm, iv, union, durations, byDay, sum, monthly, fmt, uid, validate };
+  // Export .ics (agenda du téléphone / ordinateur). Heures "flottantes" = heure locale.
+  function toICS(events) {
+    const esc = t => String(t || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    const ymd = d => d.replace(/-/g, ''), p2 = n => String(n).padStart(2, '0');
+    const hm = t => { const [h, m] = t.split(':'); return p2(h) + m + '00'; };
+    const nextDay = d => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + 1); return x.getFullYear() + p2(x.getMonth() + 1) + p2(x.getDate()); };
+    const fold = l => l.length <= 73 ? l : l.match(/.{1,73}/g).join('\r\n ');
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+    const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Agenda Evenements//FR', 'CALSCALE:GREGORIAN'];
+    for (const e of events) {
+      L.push('BEGIN:VEVENT', 'UID:' + e.id + '@agenda-evenements', 'DTSTAMP:' + stamp, 'SUMMARY:' + esc(e.name));
+      const r = iv(e.start, e.end);
+      if (r) L.push('DTSTART:' + ymd(e.date) + 'T' + hm(e.start), 'DTEND:' + (r[1] > 1440 ? nextDay(e.date) : ymd(e.date)) + 'T' + hm(e.end));
+      else L.push('DTSTART;VALUE=DATE:' + ymd(e.date), 'DTEND;VALUE=DATE:' + nextDay(e.date));
+      if (e.comment) L.push('DESCRIPTION:' + esc(e.comment));
+      L.push('END:VEVENT');
+    }
+    L.push('END:VCALENDAR');
+    return L.map(fold).join('\r\n') + '\r\n';
+  }
+  const api = { toICS, NORMAL, tm, iv, union, durations, byDay, sum, monthly, fmt, uid, validate };
   if (typeof module !== 'undefined') module.exports = api; else g.Calc = api;
 })(this);
