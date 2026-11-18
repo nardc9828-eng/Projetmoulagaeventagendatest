@@ -29,8 +29,8 @@ const bulk = (list, replace) => tx('readwrite', s => { if (replace) s.clear(); l
 function toast(t) { const e = $('#toast'); e.textContent = t; e.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove('show'), 2600); }
 
 /* ---------- Rendu ---------- */
-const times = e => [e.prepStart && `Prép. ${e.prepStart}–${e.prepEnd}`, e.start && `Évt ${e.start}–${e.end}`].filter(Boolean).join(' · ') || 'Pas d’horaires';
-const stats = (n, S) => `<div class="stats">${[[n, 'Événements'], [F(S.prep, 1), 'Préparation'], [F(S.real, 1), 'Événement'], [F(S.total, 1), 'Travaillé']].map(([v, l]) => `<div class="st"><b>${v}</b><span>${l}</span></div>`).join('')}<div class="st ot"><b>${F(S.ot, 1)}</b><span>Heures sup.</span></div></div>`;
+const times = e => e.start ? `${e.start} → ${e.end}` : 'Pas d’horaires';
+const stats = (n, S) => `<div class="stats">${[[n, 'Événements'], [F(S.total, 1), 'Travaillé']].map(([v, l]) => `<div class="st"><b>${v}</b><span>${l}</span></div>`).join('')}<div class="st ot"><b>${F(S.ot, 1)}</b><span>Heures sup.</span></div></div>`;
 
 function cal(days, first) {
   const m = first.getMonth(), t = iso(new Date()), last = new Date(first.getFullYear(), m + 1, 0);
@@ -45,7 +45,7 @@ function dayBlock(days, k) {
   const x = days[k];
   return `<section class="day"><h3>${fr(pd(k), { weekday: 'long', day: 'numeric', month: 'long' })}${x ? `<b>${F(x.total)}</b>` : ''}</h3>` +
     (x ? x.events.map(e => `<div class="ev" data-id="${e.id}"><strong>${esc(e.name)}</strong><span>${times(e)}</span></div>`).join('') +
-      `<div class="chips"><span>Prép. ${F(x.prep)}</span><span>Événement ${F(x.real)}</span>${x.pause ? `<span>Pause −${F(x.pause)}</span>` : ''}<span>Normal ${F(x.normal)}</span><span class="${x.ot ? 'ot' : ''}">Sup. ${F(x.ot)}</span></div>` : '<p class="mut">Aucun événement ce jour.</p>') +
+      `<div class="chips"><span>Présence ${F(x.presence)}</span>${x.pause ? `<span>Pause −${F(x.pause)}</span>` : ''}<span class="${x.ot ? 'ot' : ''}">Sup. ${F(x.ot)}</span></div>` : '<p class="mut">Aucun événement ce jour.</p>') +
     `<button class="ghost" data-add="${k}">+ Ajouter un événement</button></section>`;
 }
 const items = () => {
@@ -94,22 +94,21 @@ function formDlg(ev) {
   const f = (id, l, v, t) => `<label>${l}<input type="${t || 'time'}" id="${id}" value="${esc(v)}"></label>`;
   dlg.innerHTML = `<h2>${events.some(e => e.id === ev.id) ? 'Modifier l’événement' : 'Nouvel événement'}</h2>
     <label>Nom<input id="f-name" value="${esc(ev.name)}" placeholder="Ex. Congrès annuel"></label>${f('f-date', 'Date', ev.date, 'date')}
-    <fieldset><legend>Préparation</legend><div class="row">${f('f-ps', 'Début', ev.prepStart)}${f('f-pe', 'Fin', ev.prepEnd)}</div></fieldset>
-    <fieldset><legend>Événement (horaires réels)</legend><div class="row">${f('f-s', 'Début', ev.start)}${f('f-e', 'Fin', ev.end)}</div></fieldset>
+    <fieldset><legend>Horaires de l’événement</legend><div class="row">${f('f-s', 'Début', ev.start)}${f('f-e', 'Fin', ev.end)}</div></fieldset>
     <p id="f-calc" class="mut"></p><label>Commentaires<textarea id="f-c" rows="2">${esc(ev.comment)}</textarea></label>
     <div class="btns"><button class="ghost" data-act="close">Annuler</button><button data-act="save">Enregistrer</button></div>`;
   calcForm(); dlg.showModal();
 }
 function calcForm() {
-  const v = i => $('#' + i).value, d = Calc.durations({ prepStart: v('f-ps'), prepEnd: v('f-pe'), start: v('f-s'), end: v('f-e') });
-  $('#f-calc').textContent = `Préparation : ${F(d.prep)} · Événement : ${F(d.real)}${Calc.tm(v('f-e')) !== null && Calc.tm(v('f-s')) !== null && Calc.tm(v('f-e')) < Calc.tm(v('f-s')) ? ' (finit après minuit)' : ''}`;
+  const v = i => $('#' + i).value, s = Calc.tm(v('f-s')), e = Calc.tm(v('f-e'));
+  $('#f-calc').textContent = `Durée : ${F(Calc.durations({ start: v('f-s'), end: v('f-e') }).real)}${s !== null && e !== null && e < s ? ' (finit après minuit)' : ''}`;
 }
 const blank = d => ({ id: Calc.uid(), name: '', date: d || sel, prepStart: '', prepEnd: '', start: '', end: '', comment: '' });
 async function saveForm() {
   const g = i => $('#' + i).value.trim();
-  const ev = { ...editing, name: g('f-name'), date: g('f-date'), prepStart: g('f-ps'), prepEnd: g('f-pe'), start: g('f-s'), end: g('f-e'), comment: g('f-c') };
+  const ev = { ...editing, name: g('f-name'), date: g('f-date'), prepStart: '', prepEnd: '', start: g('f-s'), end: g('f-e'), comment: g('f-c') };
   if (!ev.name || !ev.date) return toast('Le nom et la date sont obligatoires');
-  if (!ev.prepStart !== !ev.prepEnd || !ev.start !== !ev.end) return toast('Renseignez le début ET la fin');
+  if (!ev.start !== !ev.end) return toast('Renseignez le début ET la fin');
   try { await save(ev); await load(); } catch (e) { return toast('Échec de l’enregistrement'); }
   sel = ev.date; cur = pd(ev.date); dlg.close(); render(); toast('Enregistré');
 }
@@ -117,9 +116,9 @@ function detail(id) {
   const e = events.find(x => x.id === id); if (!e) return;
   const d = Calc.durations(e), x = Calc.byDay(events)[e.date];
   dlg.innerHTML = `<h2>${esc(e.name)}</h2><p class="mut">${fr(pd(e.date), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-    <p><b>Préparation</b> : ${e.prepStart ? `${e.prepStart} → ${e.prepEnd} (${F(d.prep)})` : '—'}<br><b>Événement</b> : ${e.start ? `${e.start} → ${e.end} (${F(d.real)})` : '—'}</p>
+    <p><b>Horaires</b> : ${e.start ? `${e.start} → ${e.end} (${F(d.real)})` : '—'}</p>
     ${e.comment ? `<p>${esc(e.comment).replace(/\n/g, '<br>')}</p>` : ''}
-    <div class="chips"><span>Présence ${F(x.presence)}</span>${x.pause ? `<span>Pause −${F(x.pause)}</span>` : ''}<span>Travaillé ${F(x.total)}</span><span>Normal ${F(x.normal)}</span><span class="${x.ot ? 'ot' : ''}">Sup. ${F(x.ot)}</span></div>
+    <div class="chips"><span>Présence ${F(x.presence)}</span>${x.pause ? `<span>Pause −${F(x.pause)}</span>` : ''}<span>Travaillé ${F(x.total)}</span><span class="${x.ot ? 'ot' : ''}">Sup. ${F(x.ot)}</span></div>
     <div class="btns"><button class="ghost" data-act="close">Fermer</button><button data-act="edit" data-id="${e.id}">Modifier</button><button class="danger" data-act="del" data-id="${e.id}">Supprimer</button></div>`;
   dlg.showModal();
 }
