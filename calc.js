@@ -24,7 +24,8 @@
   }
   const durations = ev => ({ prep: len(iv(ev.prepStart, ev.prepEnd)), real: len(iv(ev.start, ev.end)) });
   // Regroupe par date (un événement qui passe minuit reste rattaché à sa date de début)
-  function byDay(events) {
+  function byDay(events, o = {}) {
+    const NORM = o.normal ?? NORMAL, PA = o.pause ?? PAUSE, LF = o.from ?? LUNCH_FROM, LT = o.to ?? LUNCH_TO, dp = o.dayPause || {};
     const days = {};
     for (const ev of events) {
       const d = days[ev.date] || (days[ev.date] = { events: [], p: [], r: [] });
@@ -41,12 +42,14 @@
       d.presence = union(all); // temps de présence sur site (sans double comptage)
       // Pause déjeuner : 1 h déduite si vous êtes présent sur la plage 12h-14h,
       // moins l'éventuelle coupure déjà présente dans cette plage.
-      const win = union(all.map(i => i && [Math.max(i[0], LUNCH_FROM), Math.min(i[1], LUNCH_TO)]).filter(i => i && i[1] > i[0]));
-      const gap = (LUNCH_TO - LUNCH_FROM) - win;
-      d.pause = Math.min(Math.max(0, PAUSE - gap), win);
+      const win = union(all.map(i => i && [Math.max(i[0], LF), Math.min(i[1], LT)]).filter(i => i && i[1] > i[0]));
+      const gap = (LT - LF) - win;
+      d.pause = Math.min(Math.max(0, PA - gap), win);
+      d.manual = dp[k] !== undefined; // pause saisie à la main pour ce jour
+      if (d.manual) d.pause = Math.min(dp[k], d.presence);
       d.total = d.presence - d.pause; // travail effectif
-      d.normal = Math.min(d.total, NORMAL);
-      d.ot = Math.max(0, d.total - NORMAL);
+      d.normal = Math.min(d.total, NORM);
+      d.ot = Math.max(0, d.total - NORM);
     }
     return days;
   }
@@ -93,7 +96,10 @@
       seen.add(ev.id);
       events.push(ev);
     });
-    return { ok: errors.length === 0, errors, warnings, events };
+    const src = data && !Array.isArray(data) ? data : {}, dayPause = {}, st = src.settings;
+    for (const [k, v] of Object.entries(src.dayPause || {})) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && Number.isFinite(+v) && v >= 0 && v <= 480) dayPause[k] = +v;
+    const settings = st && st.normal > 0 && st.normal <= 16 && st.pause >= 0 && st.to > st.from ? { normal: +st.normal, pause: +st.pause, from: +st.from, to: +st.to } : null;
+    return { ok: errors.length === 0, errors, warnings, events, dayPause, settings };
   }
   const api = { NORMAL, tm, iv, union, durations, byDay, sum, monthly, fmt, uid, validate };
   if (typeof module !== 'undefined') module.exports = api; else g.Calc = api;
