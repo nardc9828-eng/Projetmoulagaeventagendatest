@@ -22,40 +22,42 @@
     }
     return cs === null ? tot : tot + ce - cs;
   }
-  const durations = ev => ({ prep: len(iv(ev.prepStart, ev.prepEnd)), real: len(iv(ev.start, ev.end)) });
+  // Préparation : durée en minutes saisie par événement (anciennes données : plage prepStart-prepEnd)
+  const prepOf = ev => (ev.prep !== undefined ? Math.max(0, +ev.prep || 0) : len(iv(ev.prepStart, ev.prepEnd)));
+  const durations = ev => ({ prep: prepOf(ev), real: len(iv(ev.start, ev.end)) });
   // Regroupe par date (un événement qui passe minuit reste rattaché à sa date de début)
   function byDay(events, o = {}) {
     const NORM = o.normal ?? NORMAL, PA = o.pause ?? PAUSE, LF = o.from ?? LUNCH_FROM, LT = o.to ?? LUNCH_TO, dp = o.dayPause || {};
     const days = {};
     for (const ev of events) {
-      const d = days[ev.date] || (days[ev.date] = { events: [], p: [], r: [] });
+      const d = days[ev.date] || (days[ev.date] = { events: [], r: [], prep: 0 });
       d.events.push(ev);
-      d.p.push(iv(ev.prepStart, ev.prepEnd));
       d.r.push(iv(ev.start, ev.end));
+      d.prep += prepOf(ev);
     }
     for (const k in days) {
       const d = days[k];
-      d.events.sort((a, b) => (a.prepStart || a.start || '99').localeCompare(b.prepStart || b.start || '99'));
-      d.prep = union(d.p);
-      d.real = union(d.r);
-      const all = [...d.p, ...d.r];
-      d.presence = union(all); // temps de présence sur site (sans double comptage)
+      d.events.sort((a, b) => (a.start || '99').localeCompare(b.start || '99'));
+      d.real = d.presence = union(d.r); // temps sur site (sans double comptage)
+      // Temps event : du début du 1er événement à la fin du dernier (coupures comprises)
+      const rs = d.r.filter(Boolean);
+      d.span = rs.length ? Math.max(...rs.map(i => i[1])) - Math.min(...rs.map(i => i[0])) : 0;
       // Pause déjeuner : 1 h déduite si vous êtes présent sur la plage 12h-14h,
       // moins l'éventuelle coupure déjà présente dans cette plage.
-      const win = union(all.map(i => i && [Math.max(i[0], LF), Math.min(i[1], LT)]).filter(i => i && i[1] > i[0]));
+      const win = union(d.r.map(i => i && [Math.max(i[0], LF), Math.min(i[1], LT)]).filter(i => i && i[1] > i[0]));
       const gap = (LT - LF) - win;
       d.pause = Math.min(Math.max(0, PA - gap), win);
       d.manual = dp[k] !== undefined; // pause saisie à la main pour ce jour
       if (d.manual) d.pause = Math.min(dp[k], d.presence);
-      d.total = d.presence - d.pause; // travail effectif
+      d.total = d.presence - d.pause + d.prep; // temps travaillé = présence - pause + préparation
       d.normal = Math.min(d.total, NORM);
       d.ot = Math.max(0, d.total - NORM);
     }
     return days;
   }
   function sum(list) {
-    const s = { jours: list.length, prep: 0, real: 0, presence: 0, pause: 0, total: 0, normal: 0, ot: 0 };
-    for (const d of list) for (const k of ['prep', 'real', 'presence', 'pause', 'total', 'normal', 'ot']) s[k] += d[k];
+    const s = { jours: list.length, span: 0, prep: 0, real: 0, presence: 0, pause: 0, total: 0, normal: 0, ot: 0 };
+    for (const d of list) for (const k of ['span', 'prep', 'real', 'presence', 'pause', 'total', 'normal', 'ot']) s[k] += d[k];
     return s;
   }
   function monthly(days) {
@@ -84,6 +86,7 @@
       if (!e.name || typeof e.name !== 'string') return errors.push(p + ' : nom manquant');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date || '') || isNaN(new Date(e.date))) return errors.push(p + ' : date invalide');
       const ev = { id: String(e.id || uid()), name: e.name.trim(), date: e.date, comment: String(e.comment || '') };
+      if (e.prep !== undefined) ev.prep = Number.isFinite(+e.prep) ? Math.max(0, Math.min(1440, Math.round(+e.prep))) : 0;
       let bad = false;
       for (const k of ['prepStart', 'prepEnd', 'start', 'end']) {
         ev[k] = e[k] || '';
@@ -98,7 +101,7 @@
     });
     const src = data && !Array.isArray(data) ? data : {}, dayPause = {}, st = src.settings;
     for (const [k, v] of Object.entries(src.dayPause || {})) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && Number.isFinite(+v) && v >= 0 && v <= 480) dayPause[k] = +v;
-    const settings = st && st.normal > 0 && st.normal <= 16 && st.pause >= 0 && st.to > st.from ? { normal: +st.normal, pause: +st.pause, from: +st.from, to: +st.to } : null;
+    const settings = st && st.normal > 0 && st.normal <= 16 && st.pause >= 0 && st.to > st.from ? { normal: +st.normal, pause: +st.pause, from: +st.from, to: +st.to, week: st.week > 0 && st.week <= 80 ? +st.week : 35, prep: st.prep >= 0 && st.prep <= 600 ? +st.prep : 0 } : null;
     return { ok: errors.length === 0, errors, warnings, events, dayPause, settings };
   }
   // Export .ics (agenda du téléphone / ordinateur). Heures "flottantes" = heure locale.
@@ -121,6 +124,36 @@
     L.push('END:VCALENDAR');
     return L.map(fold).join('\r\n') + '\r\n';
   }
-  const api = { toICS, NORMAL, tm, iv, union, durations, byDay, sum, monthly, fmt, uid, validate };
+  // Lecture d'un fichier .ics : on ne reprend que nom + date (+ horaire prévu noté en commentaire)
+  function parseICS(text) {
+    const unesc = x => String(x || '').replace(/\\[nN]/g, '\n').replace(/\\([,;\\])/g, '$1'), p2 = n => String(n).padStart(2, '0');
+    const lines = String(text).replace(/\r?\n[ \t]/g, '').split(/\r?\n/), events = [];
+    let cur = null, recurring = 0;
+    const dt = x => {
+      if (!x) return null;
+      const m = x.val.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/); if (!m) return null;
+      if (m[4] === undefined) return { date: `${m[1]}-${m[2]}-${m[3]}`, allDay: true };
+      let d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+      if (m[7]) d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+      return { date: `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`, time: `${p2(d.getHours())}:${p2(d.getMinutes())}` };
+    };
+    const done = c => {
+      const a = dt(c.DTSTART), b = dt(c.DTEND); if (!a) return;
+      if (c.RRULE) recurring++;
+      const name = unesc(c.SUMMARY && c.SUMMARY.val).trim() || 'Sans titre', uid = String((c.UID && c.UID.val) || name).replace(/[^A-Za-z0-9_.@-]/g, '_');
+      const dates = [a.date];
+      if (a.allDay && b && b.allDay) { const e0 = new Date(a.date + 'T12:00:00'); for (let i = 1; i < 31; i++) { const x = new Date(e0); x.setDate(x.getDate() + i); const k = `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`; if (k >= b.date) break; dates.push(k); } }
+      const plan = !a.allDay && a.time ? `Prévu à l’agenda : ${a.time}${b && b.time ? '–' + b.time : ''}` : '';
+      const desc = unesc(c.DESCRIPTION && c.DESCRIPTION.val).trim();
+      for (const date of dates) events.push({ id: 'ics-' + uid + '-' + date, name, date, prepStart: '', prepEnd: '', start: '', end: '', comment: [plan, desc].filter(Boolean).join('\n') });
+    };
+    for (const l of lines) {
+      if (l === 'BEGIN:VEVENT') cur = {};
+      else if (l === 'END:VEVENT') { if (cur) done(cur); cur = null; }
+      else if (cur) { const i = l.indexOf(':'); if (i > 0) cur[l.slice(0, i).split(';')[0].toUpperCase()] = { val: l.slice(i + 1) }; }
+    }
+    return { events, recurring };
+  }
+  const api = { toICS, parseICS, NORMAL, tm, iv, union, durations, byDay, sum, monthly, fmt, uid, validate };
   if (typeof module !== 'undefined') module.exports = api; else g.Calc = api;
 })(this);
