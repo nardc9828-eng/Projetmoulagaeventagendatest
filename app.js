@@ -12,7 +12,9 @@ const opts = () => ({ normal: settings.normal * 60, pause: settings.pause, from:
 const THEMES = { bordeaux: 'Bordeaux & or', bleu: 'Bleu marine', foret: 'Vert forêt', ocean: 'Océan', emeraude: 'Émeraude', violet: 'Violet', framboise: 'Framboise', corail: 'Corail', sombre: 'Sombre', nuit: 'Nuit bleue', noiror: 'Noir & or', auto: 'Auto (clair/sombre)' };
 const TCOL = { bordeaux: ['#5b1527', '#c9a24a'], bleu: ['#17324d', '#5b8fc9'], foret: ['#1f4d3a', '#b8963e'], ocean: ['#0b5563', '#2bb8a6'], emeraude: ['#0f6b4f', '#34d399'], violet: ['#4c2a85', '#b98cf5'], framboise: ['#a3174f', '#ff7aa8'], corail: ['#c2410c', '#f59e0b'], sombre: ['#14100f', '#c9a24a'], nuit: ['#0b1220', '#60a5fa'], noiror: ['#1a1814', '#d4a73a'], auto: ['#f7f2ee', '#14100f'] };
 const SW = k => `linear-gradient(135deg, ${TCOL[k][0]} 50%, ${TCOL[k][1]} 50%)`;
-const VIEWS = { mois: 'Mois', semaine: 'Semaine', annee: 'Année', bilan: 'Bilan', data: 'Données' };
+const VIEWS = { jour: 'Jour', semaine: 'Semaine', mois: 'Mois', annee: 'Année', bilan: 'Bilan', data: 'Données' };
+let bscope = localStorage.getItem('bscope') || 'mois';
+const unit = () => (view === 'bilan' ? bscope : view);
 const vsel = () => `<select id="vs" aria-label="Changer de vue">${Object.entries(VIEWS).map(([k, v]) => `<option value="${k}"${k === view ? ' selected' : ''}>${v}</option>`).join('')}</select>`;
 const dlg = $('#dlg');
 const DEF = { normal: 7, pause: 60, from: 12, to: 14, week: 35, prep: 0 };
@@ -69,8 +71,10 @@ function dataView() {
   return `<div class="panel"><h3>Sauvegarde et export</h3>
     <p>${events.length} événement(s) enregistré(s) sur ce téléphone.</p>
     <p class="${old ? 'warn' : 'mut'}">${le ? 'Dernier export : ' + fr(new Date(le), { day: 'numeric', month: 'long', year: 'numeric' }) : 'Aucun export réalisé.'}${old ? ' — pensez à exporter ce mois-ci.' : ''}</p>
-    <div class="btns"><button data-act="export">Exporter (JSON)</button><button data-act="import">Importer / Restaurer</button><button class="ghost" data-act="ics">Vers l’agenda (.ics)</button><button class="ghost" data-act="icsimport">Depuis l’agenda (.ics)</button></div>
-    <p class="mut">Le fichier JSON contient événements, pauses modifiées et règles : sauvegarde, restauration et transfert vers l’ordinateur. Le fichier .ics ajoute vos événements à l’agenda du téléphone (il ne remplace pas la sauvegarde JSON).</p></div>
+    <div class="btns"><button data-act="export">Exporter (JSON)</button><button data-act="import">Importer / Restaurer</button></div>
+    <p class="mut">Le fichier JSON contient événements, pauses et règles : c’est votre sauvegarde, la restauration et le transfert vers l’ordinateur.</p></div>
+    <div class="panel"><h3>Autres formats</h3><div class="btns"><button class="ghost" data-act="xlsx">Exporter en Excel (.xlsx)</button><button class="ghost" data-act="ics">Vers l’agenda (.ics)</button><button class="ghost" data-act="icsimport">Depuis l’agenda (.ics)</button></div>
+    <p class="mut">Excel : tous vos événements, avec un récapitulatif par jour et par mois. Le .ics échange avec l’agenda du téléphone. Ni l’un ni l’autre ne remplace la sauvegarde JSON.</p></div>
     <div class="panel"><h3>Règles de calcul</h3><div class="row">${inp('s-n', 'Travail normal (h/jour)', settings.normal, '0.25')}${inp('s-p', 'Pause (min)', settings.pause, '5')}</div>
     <div class="row">${inp('s-f', 'Pause entre (h)', settings.from, '0.5')}${inp('s-t', 'et (h)', settings.to, '0.5')}</div>
     <div class="row">${inp('s-w', 'Objectif par semaine (h)', settings.week, '0.5')}${inp('s-pd', 'Préparation par défaut (min)', settings.prep, '5')}</div>
@@ -79,23 +83,27 @@ function dataView() {
     <div class="panel"><h3>Apparence</h3><div class="thm">${Object.entries(THEMES).map(([k, v]) => `<button data-th="${k}" class="${k === th ? 'on' : ''}"><span class="sw" style="background:${SW(k)}"></span>${v}</button>`).join('')}</div></div>
     <div class="panel"><h3>État du stockage</h3><p class="mut" id="persist">Vérification…</p></div>`;
 }
+function range(u) {
+  if (u === 'jour') { const d = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()); return [d, d, fr(d, { weekday: 'short', day: 'numeric', month: 'long' })]; }
+  if (u === 'annee') return [new Date(cur.getFullYear(), 0, 1), new Date(cur.getFullYear(), 11, 31), String(cur.getFullYear())];
+  if (u === 'semaine') { const f = monday(cur), t = addDays(f, 6); return [f, t, `${fr(f)} – ${fr(t, { day: 'numeric', month: 'short', year: 'numeric' })}`]; }
+  return [new Date(cur.getFullYear(), cur.getMonth(), 1), new Date(cur.getFullYear(), cur.getMonth() + 1, 0), cur.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })];
+}
 function render() {
-  const days = Calc.byDay(events, opts()), nav = view === 'mois' || view === 'semaine' || view === 'bilan' || view === 'annee';
-  const T = { data: 'Données', bilan: 'Bilan' };
-  let from, to, label;
-  if (view === 'annee') { from = new Date(cur.getFullYear(), 0, 1); to = new Date(cur.getFullYear(), 11, 31); label = String(cur.getFullYear()); }
-  else if (view === 'semaine') { from = monday(cur); to = addDays(from, 6); label = `${fr(from)} – ${fr(to, { day: 'numeric', month: 'short', year: 'numeric' })}`; }
-  else { from = new Date(cur.getFullYear(), cur.getMonth(), 1); to = new Date(cur.getFullYear(), cur.getMonth() + 1, 0); label = cur.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }); }
-  $('#top').innerHTML = nav ? `${vsel()}<button data-nav="-1" aria-label="Précédent">‹</button><h1>${label}</h1><button data-nav="1" aria-label="Suivant">›</button><button data-nav="0" class="today">Auj.</button>` : `${vsel()}<h1>${T[view]}</h1>`;
+  const days = Calc.byDay(events, opts()), u = unit();
   let b = '';
-  if (nav) {
-    const a = iso(from), z = iso(to), ks = Object.keys(days).filter(k => k >= a && k <= z);
-    const PS = Calc.sum(ks.map(k => days[k]));
-    b = stats(events.filter(e => e.date >= a && e.date <= z).length, PS) + (view === 'semaine' ? gauge(PS.total) : '') +
-      (view === 'mois' ? cal(days, from) + dayBlock(days, sel) : view === 'bilan' ? bilan(days, ks, from) : view === 'annee' ? year(days, from) : Array.from({ length: 7 }, (_, i) => dayBlock(days, iso(addDays(from, i)))).join(''));
-  } else b = dataView();
+  if (view !== 'data') {
+    const [from, to, label] = range(u), a = iso(from), z = iso(to), td = iso(new Date());
+    $('#top').innerHTML = `${vsel()}<button data-nav="-1" aria-label="Précédent">‹</button><h1>${label}</h1><button data-nav="1" aria-label="Suivant">›</button>${td >= a && td <= z ? '' : '<button data-nav="0" class="today">Aujourd’hui</button>'}`;
+    const ks = Object.keys(days).filter(k => k >= a && k <= z).sort(), PS = Calc.sum(ks.map(k => days[k]));
+    if (view === 'bilan') b = bilan(days, ks, PS, u, from);
+    else {
+      if (view === 'jour') sel = a;
+      b = stats(events.filter(e => e.date >= a && e.date <= z).length, PS) + (view === 'semaine' ? gauge(PS.total) : '') +
+        (view === 'jour' ? dayBlock(days, a) : view === 'mois' ? cal(days, from) + dayBlock(days, sel) : view === 'annee' ? year(days, from) : Array.from({ length: 7 }, (_, i) => dayBlock(days, iso(addDays(from, i)))).join(''));
+    }
+  } else { $('#top').innerHTML = `${vsel()}<h1>Données</h1>`; b = dataView(); }
   $('#main').innerHTML = banner() + b;
-  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === view));
   if (view === 'data') persistInfo();
 }
 async function persistInfo() {
@@ -153,6 +161,22 @@ async function exportJSON() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
   localStorage.setItem('lastExport', new Date().toISOString()); toast('Fichier exporté'); render();
 }
+async function exportXLSX() {
+  const days = Calc.byDay(events, opts()), h = m => Math.round(m / 60 * 100) / 100, fd = k => k.split('-').reverse().join('/'), B = v => ({ v, b: 1 });
+  const keys = Object.keys(days).sort(), mo = Calc.monthly(days), S = Calc.sum(keys.map(k => days[k]));
+  const evs = events.slice().sort((a, b) => a.date.localeCompare(b.date) || (a.start || '').localeCompare(b.start || ''));
+  const MN = k => fr(new Date(+k.slice(0, 4), +k.slice(5) - 1, 1), { month: 'long', year: 'numeric' });
+  const sheets = [
+    { name: 'Événements', rows: [['Date', 'Événement', 'Début', 'Fin', 'Durée (h)', 'Préparation (h)', 'Commentaires'], ...evs.map(e => { const d = Calc.durations(e); return [fd(e.date), e.name, e.start, e.end, h(d.real), h(d.prep), e.comment]; })] },
+    { name: 'Jours', rows: [['Date', 'Événement(s)', 'Temps event (h)', 'Temps travaillé (h)', 'Heures sup. (h)'], ...keys.map(k => [fd(k), days[k].events.map(e => e.name).join(' / '), h(days[k].span), h(days[k].total), h(days[k].ot)]), [B('TOTAL'), '', B(h(S.span)), B(h(S.total)), B(h(S.ot))]] },
+    { name: 'Récap mensuel', rows: [['Mois', 'Événements', 'Jours travaillés', 'Temps event (h)', 'Temps travaillé (h)', 'Heures sup. (h)'], ...mo.map(m => [MN(m.month), m.evenements, m.jours, h(m.span), h(m.total), h(m.ot)]), [B('TOTAL'), B(events.length), B(S.jours), B(h(S.span)), B(h(S.total)), B(h(S.ot))]] },
+  ];
+  const name = `agenda-${iso(new Date())}.xlsx`, mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const blob = new Blob([makeXlsx(sheets)], { type: mime }), file = new File([blob], name, { type: mime });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1e4); toast('Fichier Excel prêt');
+}
 async function exportICS() {
   const name = `agenda-${iso(new Date())}.ics`, blob = new Blob([Calc.toICS(events)], { type: 'text/calendar' }), file = new File([blob], name, { type: 'text/calendar' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; } }
@@ -200,14 +224,16 @@ function year(days, from) {
   }
   return h + '</div><p class="mut"><b class="lgd e"></b> jour avec événement · <b class="lgd o"></b> avec heures sup. · <b class="lgd p"></b> à compléter · touchez un jour ou un mois pour l’ouvrir</p>';
 }
-function bilan(days, ks, from) {
-  const y = String(from.getFullYear()), S = Calc.sum(ks.map(k => days[k]));
-  const mo = Calc.monthly(Object.fromEntries(Object.keys(days).filter(k => k.startsWith(y)).map(k => [k, days[k]])));
-  const row = (a, e, b, c, o) => `<tr><td>${a}</td><td>${e}</td><td>${b}</td><td class="${o ? 'ot' : ''}">${c}</td></tr>`;
-  const head = a => `<tr><th>${a}</th><th>Event</th><th>Travaillé</th><th>Sup.</th></tr>`;
-  return `<div class="panel"><h3>Résumé du mois</h3><p>${S.jours} jour(s) travaillé(s)<br>Temps event <b>${F(S.span)}</b> · temps travaillé <b>${F(S.total)}</b> · <b class="warn">heures sup. ${F(S.ot)}</b>${S.prep ? `<br>dont préparation ${F(S.prep)}` : ''}</p></div>
-    <div class="panel"><h3>Jour par jour</h3><table>${head('Date')}${ks.map(k => row(fr(pd(k), { weekday: 'short', day: 'numeric' }), F(days[k].span), F(days[k].total), F(days[k].ot), days[k].ot)).join('') || '<tr><td colspan="4" class="mut">Aucun événement ce mois-ci.</td></tr>'}</table></div>
-    <div class="panel"><h3>Année ${y}</h3><table>${head('Mois')}${mo.map(m => row(fr(new Date(+y, +m.month.slice(5) - 1, 1), { month: 'long' }), F(m.span), F(m.total), F(m.ot), m.ot)).join('') || '<tr><td colspan="4" class="mut">—</td></tr>'}</table></div>`;
+const BS = { jour: 'Jour', semaine: 'Semaine', mois: 'Mois', annee: 'Année' };
+function bilan(days, ks, S, u, from) {
+  const card = (v, l, o) => `<div class="st${o ? ' ot' : ''}"><b>${v}</b><span>${l}</span></div>`;
+  const row = (a, e, w, ot) => `<tr><td>${a}</td><td>${e}</td><td>${w}</td><td class="${ot ? 'ot' : ''}">${F(ot)}</td></tr>`;
+  let rows = '';
+  if (u === 'annee') rows = Calc.monthly(Object.fromEntries(ks.map(k => [k, days[k]]))).map(m => row(fr(new Date(from.getFullYear(), +m.month.slice(5) - 1, 1), { month: 'long' }), F(m.span), F(m.total), m.ot)).join('');
+  else if (u !== 'jour') rows = ks.map(k => row(fr(pd(k), { weekday: 'short', day: 'numeric' }), F(days[k].span), F(days[k].total), days[k].ot)).join('');
+  return `<div class="panel"><label style="margin:0">Période du bilan<select id="bs">${Object.entries(BS).map(([k, v]) => `<option value="${k}"${k === u ? ' selected' : ''}>${v}</option>`).join('')}</select></label></div>
+    <div class="stats s3">${card(F(S.span, 1), 'Temps event')}${card(F(S.total, 1), 'Temps travaillé')}${card(F(S.ot, 1), 'Heures sup.', 1)}</div>` +
+    (rows ? `<div class="panel"><table><tr><th>${u === 'annee' ? 'Mois' : 'Jour'}</th><th>Event</th><th>Travaillé</th><th>Sup.</th></tr>${rows}</table></div>` : '<p class="mut">Aucun événement sur cette période.</p>');
 }
 function banner() {
   if (!events.length) return '';
@@ -244,14 +270,24 @@ function applyTheme() {
   document.documentElement.dataset.theme = t;
   const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
 }
-document.addEventListener('change', e => { if (e.target.id === 'vs') { view = e.target.value; render(); } });
+document.addEventListener('change', e => {
+  if (e.target.id === 'vs') { view = e.target.value; if (view === 'jour') { const s = pd(sel); if (s.getFullYear() === cur.getFullYear() && s.getMonth() === cur.getMonth()) cur = s; } render(); }
+  else if (e.target.id === 'bs') { bscope = e.target.value; localStorage.setItem('bscope', bscope); render(); }
+});
 
 /* ---------- Événements ---------- */
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-nav],[data-sel],[data-add],[data-id],[data-tab],[data-act],[data-pause],[data-ym],[data-th],[data-prep]'); if (!t) return;
+  const t = e.target.closest('[data-nav],[data-sel],[data-add],[data-id],[data-act],[data-pause],[data-ym],[data-th],[data-prep]'); if (!t) return;
   const d = t.dataset;
-  if (d.nav !== undefined) { const n = +d.nav; if (!n) { cur = new Date(); sel = iso(cur); } else if (view === 'semaine') cur = addDays(cur, 7 * n); else if (view === 'annee') cur = new Date(cur.getFullYear() + n, cur.getMonth(), 1); else cur = new Date(cur.getFullYear(), cur.getMonth() + n, 1); return render(); }
-  if (d.tab) { view = d.tab; return render(); }
+  if (d.nav !== undefined) {
+    const n = +d.nav, u = unit();
+    if (!n) { cur = new Date(); sel = iso(cur); }
+    else if (u === 'jour') cur = addDays(cur, n);
+    else if (u === 'semaine') cur = addDays(cur, 7 * n);
+    else if (u === 'annee') cur = new Date(cur.getFullYear() + n, cur.getMonth(), 1);
+    else cur = new Date(cur.getFullYear(), cur.getMonth() + n, 1);
+    return render();
+  }
   if (d.sel) { sel = d.sel; if (view === 'annee') { cur = pd(d.sel); view = 'mois'; } return render(); }
   if (d.ym) { const [yy, mm] = d.ym.split('-'); cur = new Date(+yy, +mm - 1, 1); view = 'mois'; return render(); }
   if (d.add) return formDlg(blank(d.add));
@@ -271,6 +307,7 @@ document.addEventListener('click', async e => {
     case 'savesettings': return saveSettings();
     case 'export': return exportJSON();
     case 'ics': return exportICS();
+    case 'xlsx': return exportXLSX();
     case 'icsimport': $('#icsfile').value = ''; return $('#icsfile').click();
     case 'doics': await bulk(pending.sel.map(e => ({ ...e, prep: settings.prep })), false); await load(); dlg.close(); render(); return toast(`${pending.sel.length} événement(s) ajouté(s) : complétez les horaires`);
     case 'import': $('#file').value = ''; return $('#file').click();

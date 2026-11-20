@@ -15,14 +15,12 @@
 <header id="top"></header>
 <main id="main"></main>
 <button id="fab" data-act="new" aria-label="Ajouter un événement">+</button>
-<nav id="tabs">
-  <button data-tab="mois">Mois</button><button data-tab="semaine">Semaine</button><button data-tab="annee">Année</button><button data-tab="bilan">Bilan</button><button data-tab="data">Données</button>
-</nav>
 <dialog id="dlg"></dialog>
 <div id="upd" hidden>Nouvelle version disponible <button onclick="location.reload()">Recharger</button></div>
 <div id="toast" role="status"></div>
 <input type="file" id="icsfile" accept=".ics,text/calendar" hidden>
 <input type="file" id="file" accept=".json,application/json" hidden>
 <script src="calc.js"></script>
+<script src="xlsx.js"></script>
 <script src="app.js"></script>
 </body></html>
